@@ -38,3 +38,11 @@ aws:
 logging:
   file:
     path: /app/logs/app.log
+
+code-runner:
+  python:
+    url: ${PYTHON_RUNNER_URL}
+  javascript:
+    url: ${JAVASCRIPT_RUNNER_URL}
+  java:
+    url: ${JAVA_RUNNER_URL}
