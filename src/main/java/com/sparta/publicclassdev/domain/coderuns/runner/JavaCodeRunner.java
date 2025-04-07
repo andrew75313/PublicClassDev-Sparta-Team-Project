@@ -1,84 +1,25 @@
 package com.sparta.publicclassdev.domain.coderuns.runner;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sparta.publicclassdev.global.exception.CustomException;
 import com.sparta.publicclassdev.global.exception.ErrorCode;
+import org.springframework.beans.factory.annotation.Value;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileWriter;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.util.concurrent.TimeUnit;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.util.Map;
+
 
 public class JavaCodeRunner implements CodeRunner {
+
+    @Value("${code-runner.java.url}")
+    private String javaRunnerUrl;
     
     @Override
     public String runCode(String code) {
-        validateCode(code);
-        
-        String className = getClassNameFromCode(code);
-        if (className == null) {
-            throw new CustomException(ErrorCode.INVALID_REQUEST);
-        }
-        String classFileName = className + ".java";
-        
-        File file = new File(System.getProperty("java.io.tmpdir"), classFileName);
-        try (FileWriter fileWriter = new FileWriter(file)) {
-            fileWriter.write(code);
-        } catch (IOException e) {
-            e.printStackTrace();
-            throw new CustomException(ErrorCode.INVALID_CODE);
-        }
-        
-        try {
-            ProcessBuilder compileBuilder = new ProcessBuilder("javac", file.getAbsolutePath());
-            compileBuilder.redirectErrorStream(true);
-            Process compileProcess = compileBuilder.start();
-            if (!compileProcess.waitFor(5, TimeUnit.SECONDS)) {
-                compileProcess.destroy();
-                throw new CustomException(ErrorCode.TIMEOUT);
-            }
-            
-            if (compileProcess.exitValue() != 0) {
-                BufferedReader errorReader = new BufferedReader(new InputStreamReader(compileProcess.getErrorStream()));
-                StringBuilder errorOutput = new StringBuilder();
-                String line;
-                while ((line = errorReader.readLine()) != null) {
-                    errorOutput.append(line).append("\n");
-                }
-                throw new CustomException(ErrorCode.INVALID_REQUEST);
-            }
-            
-            Long startTime = System.currentTimeMillis();
-            ProcessBuilder runBuilder = new ProcessBuilder("java", "-cp", file.getParent(), className);
-            runBuilder.redirectErrorStream(true);
-            Process runProcess = runBuilder.start();
-            
-            if (!runProcess.waitFor(5, TimeUnit.SECONDS)) {
-                runProcess.destroy();
-                throw new CustomException(ErrorCode.TIMEOUT);
-            }
-            
-            BufferedReader bufferedReader = new BufferedReader(new InputStreamReader(runProcess.getInputStream()));
-            StringBuilder stringBuilder = new StringBuilder();
-            String line;
-            while ((line = bufferedReader.readLine()) != null) {
-                stringBuilder.append(line).append("\n");
-            }
-            bufferedReader.close();
-            
-            file.delete();
-            new File(file.getAbsolutePath().replace(".java", ".class")).delete();
-            
-            Long endTime = System.currentTimeMillis();
-            Long responseTime = endTime - startTime;
-            stringBuilder.append("Execution time: ").append(responseTime).append(" ms");
-            
-            return stringBuilder.toString();
-        } catch (IOException | InterruptedException e) {
-            e.printStackTrace();
-            throw new CustomException(ErrorCode.INVALID_REQUEST);
-        }
+        return runInDockerContainer(code);
     }
     
     private void validateCode(String code) {
@@ -86,21 +27,27 @@ public class JavaCodeRunner implements CodeRunner {
             throw new CustomException(ErrorCode.INVALID_CODE);
         }
     }
-    
-    private String getClassNameFromCode(String code) {
-        String[] lines = code.split("\\r?\\n");
-        for (String line : lines) {
-            if (line.trim().startsWith("public class ")) {
-                int start = line.indexOf("public class ") + "public class ".length();
-                int end = line.indexOf(" ", start);
-                if (end == -1) {
-                    end = line.indexOf("{", start);
-                }
-                if (end != -1) {
-                    return line.substring(start, end).trim();
-                }
-            }
+
+    private String runInDockerContainer(String code) {
+        try {
+            HttpClient client = HttpClient.newHttpClient();
+
+            ObjectMapper objectMapper = new ObjectMapper();
+            String jsonBody = objectMapper.writeValueAsString(Map.of("code", code));
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(javaRunnerUrl))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+            return response.body();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            return e.getMessage();
         }
-        return null;
     }
 }
